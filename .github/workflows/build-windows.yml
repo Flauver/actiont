@@ -28,7 +28,7 @@ jobs:
       run: ./fetch.ps1
 
     - name: Build (MSVC)
-      run: cargo build --verbose --release --target x86_64-pc-windows-msvc
+      run: cargo build --release --target x86_64-pc-windows-msvc
         
     - name: Upload artifacts (MSVC)
       uses: actions/upload-artifact@v4
@@ -55,13 +55,13 @@ jobs:
 
     - name: Set default toolchain to GNU
       shell: bash  # Important: Use bash for this command
-      run: rustup default stable-x86_64-pc-windows-gnu
+      run: rustup default stable-x86_64-pc-windows-gnu && rustup override set stable-x86_64-pc-windows-gnu
     
     - name: fetch
       run: ./fetch.ps1
         
     - name: Build (GNU)
-      run: cargo build --verbose --release --target x86_64-pc-windows-gnu
+      run: cargo build --release --target x86_64-pc-windows-gnu
         
     - name: Upload artifacts (GNU)
       uses: actions/upload-artifact@v4
