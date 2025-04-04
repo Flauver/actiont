@@ -1,52 +1,133 @@
-use chai::config::SolverConfig;
-use chai::encoders::default::默认编码器;
-use chai::encoders::编码器;
-use chai::objectives::{default::默认目标函数, 目标函数};
-use chai::operators::default::默认操作;
-use chai::optimizers::{优化方法, 优化问题};
-use chai::{命令, 命令行, 命令行参数, 错误};
-use clap::Parser;
-use std::thread::spawn;
+use std::{collections::{HashMap, HashSet}, fs::{self, read_to_string}};
+use rayon::prelude::*;
+use itertools::Itertools;
 
-fn main() -> Result<(), 错误> {
-    let 参数 = 命令行参数::parse();
-    let 命令行 = 命令行::新建(参数, None);
-    let 数据 = 命令行.准备数据();
-    let _config = 数据.配置.clone();
-    match 命令行.参数.command {
-        命令::Encode => {
-            let mut 编码器 = 默认编码器::新建(&数据)?;
-            let mut 目标函数 = 默认目标函数::新建(&数据)?;
-            let mut 编码结果 = 编码器.编码(&数据.初始映射, &None).clone();
-            let 码表 = 数据.生成码表(&编码结果);
-            let (指标, _) = 目标函数.计算(&mut 编码结果);
-            命令行.输出编码结果(码表);
-            命令行.输出评测指标(指标);
+#[derive(serde::Deserialize)]
+struct Settings {
+    select_keys: Vec<String>
+}
+
+fn main() {
+    let (mut table, mut reverse) = processing_into_mapping_tables(read_to_string("data/码表.txt").unwrap());
+    let sentences: Vec<String> = split_on_punctuation(read_to_string("data/语料.txt").unwrap(), &table);
+    let settings: Settings = serde_json::from_str(fs::read_to_string("settings.json").unwrap().as_str()).unwrap();
+    let mut entries: HashMap<String, String> = HashMap::new();
+    loop {
+        let generated_sentence = analog_whole_sentence_engine(&sentences, &table, &reverse, &settings);
+        let new_entries = compare(&sentences, generated_sentence, table.clone());
+        if new_entries.difference(&table.keys().cloned().collect::<HashSet<String>>()).collect::<HashSet<&String>>().is_empty() {
+            break;
         }
-        命令::Optimize => {
-            let 线程数 = 命令行.参数.threads.unwrap_or(1);
-            let SolverConfig::SimulatedAnnealing(退火) =
-                _config.optimization.unwrap().metaheuristic.unwrap();
-            let mut 线程池 = vec![];
-            for 线程序号 in 0..线程数 {
-                let 编码器 = 默认编码器::新建(&数据)?;
-                let 目标函数 = 默认目标函数::新建(&数据)?;
-                let 操作 = 默认操作::新建(&数据)?;
-                let mut 问题 = 优化问题::新建(数据.clone(), 编码器, 目标函数, 操作);
-                let 优化方法 = 退火.clone();
-                let 子命令行 = 命令行.生成子命令行(线程序号);
-                let 线程 = spawn(move || 优化方法.优化(&mut 问题, &子命令行));
-                线程池.push(线程);
+        for entry in new_entries {
+            let code: String = entry.chars().map(|c| table[&c.to_string()].clone()).collect::<String>();
+            table.insert(entry.clone(), code.clone());
+            reverse.insert(code.clone(), entry.clone());
+            entries.insert(entry.clone(), code.clone());
+        }
+    }
+    fs::write("词条.txt", entries.iter().sorted_by_key(|&(_, code)| code).map(|(word, code)| format!("{}\t{}", word, code)).join("\n")).unwrap();
+}
+fn split_on_punctuation(text: String, table: &HashMap<String, String>) -> Vec<String> {
+    let punctuation: &[char] = &[' ', '\r', '\n', '.', '!', '?', ',', ';', ':', '…', '。', '？', '！', '，', '、', '；', '：', '“', '”', '‘', '’', '「', '」', '『', '』', '—', '《', '》', '〈', '〉', '【', '】', '〔', '〕', '（', '）', '［', '］', '｛', '｝', '〈', '〉', '《', '》', '（', '）', '［', '］', '｛', '｝', '〔', '〕', '〈', '〉'];
+    text.split(punctuation)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().filter(|c| table.contains_key(&c.to_string())).collect::<String>())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+fn processing_into_mapping_tables(text: String) -> (HashMap<String, String>, HashMap<String, String>) {
+    let mut table: HashMap<String, String> = HashMap::new();
+    let mut reverse: HashMap<String, String> = HashMap::new();
+    for line in regex::Regex::new("\r?\n").unwrap().split(&text).filter(|s| !s.is_empty()) {
+        let (word, code) = line.split_once('\t').unwrap();
+        if !table.contains_key(word) {
+            table.insert(word.to_string(), code.to_string());
+        }
+        if !reverse.contains_key(code) {
+            reverse.insert(code.to_string(), word.to_string());
+        }
+    }
+    (table, reverse)
+}
+
+fn analog_whole_sentence_engine(sentences: &Vec<String>, table: &HashMap<String, String>, reverse: &HashMap<String, String>, settings: &Settings) -> Vec<String> {
+    sentences.par_iter()
+        .map(|sentence| {
+            let code = sentence.chars().map(|c| table[&c.to_string()].clone()).collect::<String>();
+            forward_max_matching_and_mapping(&code, reverse, settings).join("")
+        })
+        .collect()
+}
+
+fn forward_max_matching_and_mapping(text: &String, reverse: &HashMap<String, String>, settings: &Settings) -> Vec<String> {
+    let mut result: Vec<String> = Vec::new();
+    let mut start: usize = 0;
+    let max_code_length = reverse.keys().map(|s| s.len()).max().unwrap() as usize;
+    while start < text.len() {
+        let mut matched = false;
+        for end in (start..std::cmp::min(start + max_code_length as usize, text.len()) + 1).rev() {
+            if end != text.len() {
+                if settings.select_keys.contains(&text[end..end + 1].to_string()) {
+                    continue;
+                }
             }
-            let mut 优化结果列表 = vec![];
-            for 线程 in 线程池 {
-                优化结果列表.push(线程.join().unwrap());
+            if reverse.contains_key(&text[start..end]) {
+                result.push(reverse[&text[start..end]].clone());
+                start = end;
+                matched = true;
+                break;
             }
-            优化结果列表.sort_by(|a, b| a.分数.partial_cmp(&b.分数).unwrap());
-            for 优化结果 in 优化结果列表 {
-                print!("{}", 优化结果.指标);
+        }
+        if !matched {
+            start += 1;
+        }
+    }
+    result
+}
+
+
+fn compare(sentences: &Vec<String>, generated_sentences: Vec<String>, table: HashMap<String, String>) -> HashSet<String> {
+    let mut result: HashSet<String> = HashSet::new();
+    let mut number_of_errors: i32 = 0;
+    for (sentence, generated_sentence) in sentences.iter().zip(generated_sentences) {
+        let sentence_chars: HashSet<char> = sentence.chars().collect();
+        let generated_sentence_chars: HashSet<char> = generated_sentence.chars().collect();
+        let same_chars: HashSet<char> = sentence_chars.intersection(&generated_sentence_chars).cloned().collect();
+        let diff_parts: Vec<String> = split(&sentence, same_chars);
+        for part in diff_parts {
+            let part_chars = part.chars().collect::<Vec<char>>();
+            let mut start: usize = 0;
+            while start < part_chars.len() - 1 {
+                let mut wordlen: usize = 0;
+                while start + wordlen < part_chars.len() {
+                    wordlen += 1;
+                    if !table.contains_key(&part_chars[start..start + wordlen].iter().collect::<String>()) {
+                        break;
+                    }
+                }
+                if wordlen > 1 {
+                    result.insert(part_chars[start..start + wordlen].iter().collect::<String>());
+                    number_of_errors += 1;
+                }
+                start += wordlen;
             }
         }
     }
-    Ok(())
+    println!("错误数: {}", number_of_errors);
+    result
+}
+
+fn split(text: &String, delimiters: HashSet<char>) -> Vec<String> {
+    if delimiters.len() == 0 {
+        return vec![text.clone()];
+    }
+    let delimiter_pattern = format!("[{}]", delimiters.iter().collect::<String>());
+    
+    let re = regex::Regex::new(&delimiter_pattern).unwrap();
+
+    re.split(text)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()    
 }
