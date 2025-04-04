@@ -1,4 +1,5 @@
-use std::{collections::{HashMap, HashSet}, fs::{self, read_to_string}};
+use std::{collections::{HashMap, HashSet}, fs::{self, read_to_string}, sync::atomic::AtomicI32};
+use std::sync::{Arc, Mutex};
 use rayon::prelude::*;
 use itertools::Itertools;
 
@@ -88,9 +89,11 @@ fn forward_max_matching_and_mapping(text: &String, reverse: &HashMap<String, Str
 
 
 fn compare(sentences: &Vec<String>, generated_sentences: Vec<String>, table: HashMap<String, String>) -> HashSet<String> {
-    let mut result: HashSet<String> = HashSet::new();
-    let mut number_of_errors: i32 = 0;
-    for (sentence, generated_sentence) in sentences.iter().zip(generated_sentences) {
+    let result: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+    let number_of_errors: AtomicI32 = AtomicI32::new(0);
+    (0..sentences.len()).into_par_iter().for_each(|i| {
+        let sentence = sentences[i].clone();
+        let generated_sentence = generated_sentences[i].clone();
         let sentence_chars: HashSet<char> = sentence.chars().collect();
         let generated_sentence_chars: HashSet<char> = generated_sentence.chars().collect();
         let same_chars: HashSet<char> = sentence_chars.intersection(&generated_sentence_chars).cloned().collect();
@@ -107,15 +110,16 @@ fn compare(sentences: &Vec<String>, generated_sentences: Vec<String>, table: Has
                     }
                 }
                 if wordlen > 1 {
-                    result.insert(part_chars[start..start + wordlen].iter().collect::<String>());
-                    number_of_errors += 1;
+                    let mut result_guard = result.lock().unwrap();
+                    result_guard.insert(part_chars[start..start + wordlen].iter().collect::<String>());
+                    number_of_errors.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 }
                 start += wordlen;
             }
         }
-    }
-    println!("错误数: {}", number_of_errors);
-    result
+    });
+    println!("错误数: {}", number_of_errors.load(std::sync::atomic::Ordering::SeqCst));
+    result.lock().unwrap().clone()
 }
 
 fn split(text: &String, delimiters: HashSet<char>) -> Vec<String> {
