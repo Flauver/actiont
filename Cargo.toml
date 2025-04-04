@@ -1,6 +1,6 @@
 [package]
 name = "整句词库处理"
-version = "2.1.0"
+version = "2.2.0"
 edition = "2024"
 
 [dependencies]
@@ -8,4 +8,4 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 regex = "1.11"
 itertools = "0.14"
-rayon = "1.5"
+rayon = "1.10"
