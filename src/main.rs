@@ -112,13 +112,13 @@ fn compare(sentences: &Vec<String>, generated_sentences: Vec<String>, table: Has
                 if wordlen > 1 {
                     let mut result_guard = result.lock().unwrap();
                     result_guard.insert(part_chars[start..start + wordlen].iter().collect::<String>());
-                    number_of_errors.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    number_of_errors.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
                 start += wordlen;
             }
         }
     });
-    println!("错误数: {}", number_of_errors.load(std::sync::atomic::Ordering::SeqCst));
+    println!("错误数: {}", number_of_errors.load(std::sync::atomic::Ordering::Relaxed));
     result.lock().unwrap().clone()
 }
 
