@@ -1,5 +1,4 @@
-use std::{collections::{HashMap, HashSet}, fs::{self, read_to_string}, sync::atomic::AtomicI32};
-use std::sync::{Arc, Mutex};
+use std::{collections::{HashMap, HashSet}, fs::{self, read_to_string}};
 use rayon::prelude::*;
 use itertools::Itertools;
 
@@ -15,7 +14,7 @@ fn main() {
     let mut entries: HashMap<String, String> = HashMap::new();
     loop {
         let generated_sentence = analog_whole_sentence_engine(&sentences, &table, &reverse, &settings);
-        let new_entries = compare(&sentences, generated_sentence, table.clone());
+        let new_entries = compare(&sentences, generated_sentence, &table);
         if new_entries.difference(&table.keys().cloned().collect::<HashSet<String>>()).collect::<HashSet<&String>>().is_empty() {
             break;
         }
@@ -23,7 +22,7 @@ fn main() {
             let code: String = entry.chars().map(|c| table[&c.to_string()].clone()).collect::<String>();
             table.insert(entry.clone(), code.clone());
             reverse.insert(code.clone(), entry.clone());
-            entries.insert(entry.clone(), code.clone());
+            entries.insert(entry, code);
         }
     }
     fs::write("词条.txt", entries.iter().sorted_by_key(|&(_, code)| code).map(|(word, code)| format!("{}\t{}", word, code)).join("\n")).unwrap();
@@ -40,7 +39,7 @@ fn split_on_punctuation(text: String, table: &HashMap<String, String>) -> Vec<St
 fn processing_into_mapping_tables(text: String) -> (HashMap<String, String>, HashMap<String, String>) {
     let mut table: HashMap<String, String> = HashMap::new();
     let mut reverse: HashMap<String, String> = HashMap::new();
-    for line in regex::Regex::new("\r?\n").unwrap().split(&text).filter(|s| !s.is_empty()) {
+    for line in regex::Regex::new("\r?\n").unwrap().split(&text.trim()).filter(|s| !s.is_empty()) {
         let (word, code) = line.split_once('\t').unwrap();
         if !table.contains_key(word) {
             table.insert(word.to_string(), code.to_string());
@@ -88,10 +87,12 @@ fn forward_max_matching_and_mapping(text: &String, reverse: &HashMap<String, Str
 }
 
 
-fn compare(sentences: &Vec<String>, generated_sentences: Vec<String>, table: HashMap<String, String>) -> HashSet<String> {
-    let result: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
-    let number_of_errors: AtomicI32 = AtomicI32::new(0);
-    (0..sentences.len()).into_par_iter().for_each(|i| {
+fn compare(sentences: &Vec<String>, generated_sentences: Vec<String>, table: &HashMap<String, String>) -> HashSet<String> {
+    let mut result: HashSet<String> = HashSet::new();
+    let mut number_of_errors = 0;
+    (0..sentences.len()).into_par_iter().map(|i| {
+        let mut result: HashSet<String> = HashSet::new();
+        let mut number_of_errors = 0;
         let sentence = sentences[i].clone();
         let generated_sentence = generated_sentences[i].clone();
         let sentence_chars: HashSet<char> = sentence.chars().collect();
@@ -110,16 +111,19 @@ fn compare(sentences: &Vec<String>, generated_sentences: Vec<String>, table: Has
                     }
                 }
                 if wordlen > 1 {
-                    let mut result_guard = result.lock().unwrap();
-                    result_guard.insert(part_chars[start..start + wordlen].iter().collect::<String>());
-                    number_of_errors.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    result.insert(part_chars[start..start + wordlen].iter().collect::<String>());
+                    number_of_errors += 1;
                 }
                 start += wordlen;
             }
         }
+        (result, number_of_errors)
+    }).collect::<Vec<(HashSet<String>, i32)>>().into_iter().for_each(|(thread_result, thread_number_of_errors)| {
+        result.extend(thread_result);
+        number_of_errors += thread_number_of_errors;
     });
-    println!("错误数: {}", number_of_errors.load(std::sync::atomic::Ordering::Relaxed));
-    result.lock().unwrap().clone()
+    println!("错误数: {}", number_of_errors);
+    result
 }
 
 fn split(text: &String, delimiters: HashSet<char>) -> Vec<String> {
