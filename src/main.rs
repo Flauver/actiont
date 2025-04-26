@@ -25,8 +25,10 @@ fn main() {
         for entry in new_entries {
             let code: String = entry.chars().map(|c| table[&c.to_string()].clone()).collect::<String>();
             table.insert(entry.clone(), code.clone());
-            reverse.insert(code.clone(), entry.clone());
-            entries.insert(code, entry);
+            if !reverse.contains_key(&code) {
+                reverse.insert(code.clone(), entry.clone());
+                entries.insert(code, entry);
+            }
         }
     }
     fs::write("词条.txt", entries.iter().sorted_by_key(|&(code, _)| code).map(|(code, word)| format!("{}\t{}", word, code)).join("\n")).unwrap();
@@ -78,9 +80,6 @@ fn add_words(table: &mut HashMap<String, String>, reverse: &mut HashMap<String, 
             } else {
                 let word = chars[i - 1..i + 1].iter().collect::<String>();
                 let code = table[&chars[i - 1].to_string()].clone()+ &table[&char.to_string()].clone();
-                if reverse.contains_key(&code) {
-                    table.remove(&reverse[&code]);
-                }
                 table.insert(word.clone(), code.clone());
                 reverse.insert(code.clone(), word.clone());
                 entries.insert(code, word);
@@ -130,6 +129,7 @@ fn compare(sentences: &Vec<String>, generated_sentences: Vec<Vec<Vec<char>>>, ta
     (0..sentences.len()).into_par_iter().map(|i| {
         let sentence = sentences[i].chars().collect::<Vec<_>>();
         let generated_sentence = &generated_sentences[i];
+        println!("{:?}", generated_sentence);
         if sentence.len() < 2 {
             return None;
         }
@@ -137,11 +137,12 @@ fn compare(sentences: &Vec<String>, generated_sentences: Vec<Vec<Vec<char>>>, ta
         let mut k = 0;
         for word in generated_sentence {
             for char in word {
+                println!("{} {}", char, sentence[k]);
                 if *char != sentence[k] {
                     let mut word_len = 2;
                     loop {
                         if j + word_len > sentence.len() {
-                            return None;
+                            return Some(sentence[j..j + word_len - 1].iter().map(|c| c.clone()).collect::<String>());
                         }
                         let word = sentence[j..j + word_len].iter().map(|c| c.clone()).collect::<String>();
                         if !table.contains_key(&word) {
