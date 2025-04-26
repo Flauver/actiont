@@ -26,10 +26,10 @@ fn main() {
             let code: String = entry.chars().map(|c| table[&c.to_string()].clone()).collect::<String>();
             table.insert(entry.clone(), code.clone());
             reverse.insert(code.clone(), entry.clone());
-            entries.insert(entry, code);
+            entries.insert(code, entry);
         }
     }
-    fs::write("词条.txt", entries.iter().sorted_by_key(|&(_, code)| code).map(|(word, code)| format!("{}\t{}", word, code)).join("\n")).unwrap();
+    fs::write("词条.txt", entries.iter().sorted_by_key(|&(code, _)| code).map(|(code, word)| format!("{}\t{}", word, code)).join("\n")).unwrap();
 }
 fn split_on_punctuation(text: String, table: &HashMap<String, String>) -> Vec<String> {
     let punctuation: &[char] = &[' ', '\r', '\n', '.', '!', '?', ',', ';', ':', '…', '。', '？', '！', '，', '、', '；', '：', '“', '”', '‘', '’', '「', '」', '『', '』', '—', '《', '》', '〈', '〉', '【', '】', '〔', '〕', '（', '）', '［', '］', '｛', '｝', '〈', '〉', '《', '》', '（', '）', '［', '］', '｛', '｝', '〔', '〕', '〈', '〉'];
@@ -74,13 +74,13 @@ fn add_words(table: &mut HashMap<String, String>, reverse: &mut HashMap<String, 
                 let code = table[&char.to_string()].clone() + &table[&chars[i + 1].to_string()].clone();
                 table.insert(word.clone(), code.clone());
                 reverse.insert(code.clone(), word.clone());
-                entries.insert(word, code);
+                entries.insert(code, word);
             } else {
                 let word = chars[i - 1..i + 1].iter().collect::<String>();
                 let code = table[&chars[i - 1].to_string()].clone()+ &table[&char.to_string()].clone();
                 table.insert(word.clone(), code.clone());
                 reverse.insert(code.clone(), word.clone());
-                entries.insert(word, code);
+                entries.insert(code, word);
             }
         }
     }
