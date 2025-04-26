@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, fs::{self, read_to_string}};
+use std::fs::{self, read_to_string};
 use rayon::prelude::*;
 use itertools::Itertools;
 
@@ -7,11 +7,14 @@ struct Settings {
     select_keys: Vec<String>
 }
 
+type HashMap<K, V> = std::collections::HashMap<K, V, rustc_hash::FxBuildHasher>;
+type HashSet<T> = std::collections::HashSet<T, rustc_hash::FxBuildHasher>;
+
 fn main() {
     let (mut table, mut reverse) = processing_into_mapping_tables(read_to_string("data/码表.txt").unwrap());
     let sentences: Vec<String> = split_on_punctuation(read_to_string("data/语料.txt").unwrap(), &table);
     let settings: Settings = serde_json::from_str(fs::read_to_string("settings.json").unwrap().as_str()).unwrap();
-    let mut entries: HashMap<String, String> = HashMap::with_capacity(100000);
+    let mut entries: HashMap<String, String> = HashMap::default();
     add_words(&mut table, &mut reverse, &mut entries, &sentences);
     loop {
         let generated_sentence = analog_whole_sentence_engine(&sentences, &table, &reverse, &settings);
@@ -38,8 +41,8 @@ fn split_on_punctuation(text: String, table: &HashMap<String, String>) -> Vec<St
 }
 
 fn processing_into_mapping_tables(text: String) -> (HashMap<String, String>, HashMap<String, String>) {
-    let mut table: HashMap<String, String> = HashMap::with_capacity(8000);
-    let mut reverse: HashMap<String, String> = HashMap::with_capacity(8000);
+    let mut table: HashMap<String, String> = HashMap::default();
+    let mut reverse: HashMap<String, String> = HashMap::default();
     for line in text.trim().lines().filter(|s| !s.is_empty()) {
         let (word, code) = line.split_once('\t').unwrap();
         if !table.contains_key(word) {
@@ -53,7 +56,7 @@ fn processing_into_mapping_tables(text: String) -> (HashMap<String, String>, Has
 }
 
 fn add_words(table: &mut HashMap<String, String>, reverse: &mut HashMap<String, String>, entries: &mut HashMap<String, String>, sentences: &Vec<String>) {
-    let mut first = HashSet::with_capacity(8000);
+    let mut first = HashSet::default();
     for word in reverse.values().collect::<Vec<_>>().into_iter() {
         first.insert(word.clone());
     }
@@ -83,17 +86,17 @@ fn add_words(table: &mut HashMap<String, String>, reverse: &mut HashMap<String, 
     }
 }
 
-fn analog_whole_sentence_engine(sentences: &Vec<String>, table: &HashMap<String, String>, reverse: &HashMap<String, String>, settings: &Settings) -> Vec<String> {
+fn analog_whole_sentence_engine(sentences: &Vec<String>, table: &HashMap<String, String>, reverse: &HashMap<String, String>, settings: &Settings) -> Vec<Vec<Vec<char>>> {
     sentences.par_iter()
         .map(|sentence| {
             let code = sentence.chars().map(|c| table[&c.to_string()].clone()).collect::<String>();
-            forward_max_matching_and_mapping(&code, reverse, settings).join("")
+            forward_max_matching_and_mapping(&code, reverse, settings)
         })
         .collect()
 }
 
-fn forward_max_matching_and_mapping(text: &String, reverse: &HashMap<String, String>, settings: &Settings) -> Vec<String> {
-    let mut result: Vec<String> = Vec::with_capacity(10);
+fn forward_max_matching_and_mapping(text: &String, reverse: &HashMap<String, String>, settings: &Settings) -> Vec<Vec<char>> {
+    let mut result: Vec<Vec<char>> = Vec::with_capacity(10);
     let mut start: usize = 0;
     let max_code_length = reverse.keys().map(|s| s.len()).max().unwrap() as usize;
     while start < text.len() {
@@ -105,7 +108,7 @@ fn forward_max_matching_and_mapping(text: &String, reverse: &HashMap<String, Str
                 }
             }
             if reverse.contains_key(&text[start..end]) {
-                result.push(reverse[&text[start..end]].clone());
+                result.push(reverse[&text[start..end]].chars().collect::<Vec<_>>());
                 start = end;
                 matched = true;
                 break;
@@ -119,113 +122,41 @@ fn forward_max_matching_and_mapping(text: &String, reverse: &HashMap<String, Str
 }
 
 
-fn compare(sentences: &Vec<String>, generated_sentences: Vec<String>, table: &HashMap<String, String>) -> HashSet<String> {
-    let mut result: HashSet<String> = HashSet::with_capacity(300000);
-    let mut number_of_errors = 0;
+fn compare(sentences: &Vec<String>, generated_sentences: Vec<Vec<Vec<char>>>, table: &HashMap<String, String>) -> HashSet<String> {
+    let mut result = HashSet::default();
     (0..sentences.len()).into_par_iter().map(|i| {
-        let mut result: HashSet<String> = HashSet::with_capacity(5);
-        let mut number_of_errors = 0;
-        let sentence = &sentences[i];
+        let sentence = sentences[i].chars().collect::<Vec<_>>();
         let generated_sentence = &generated_sentences[i];
-        let sentence_chars: Vec<char> = sentence.chars().collect();
-        let generated_sentence_chars: Vec<char> = generated_sentence.chars().collect();
-        if sentence_chars.len() != generated_sentence_chars.len() {
-            let charset: HashSet<char> = sentence_chars.iter().cloned().collect();
-            let generated_charset: HashSet<char> = generated_sentence_chars.iter().cloned().collect();
-            let mut diff_parts = Vec::with_capacity(10);
-            if charset.len() == sentence_chars.len() {
-                let same_chars: HashSet<char> = charset.intersection(&generated_charset).cloned().collect();
-                diff_parts = split(&sentence, same_chars);
-            } else {
-                for (i, (&c1, &c2)) in sentence_chars.iter().zip(generated_sentence_chars.iter()).enumerate() {
-                    if c1 != c2 {
-                        diff_parts.push(sentence_chars[i..].iter().collect::<String>());
-                        break;
-                    }
-                }
-            }
-            for part in diff_parts {
-                let part_chars = part.chars().collect::<Vec<char>>();
-                let mut wordlen: usize = 0;
-                while wordlen < part_chars.len() {
-                    wordlen += 1;
-                    if !table.contains_key(&part_chars[0..wordlen].iter().collect::<String>()) {
-                        break;
-                    }
-                }
-                if wordlen > 1 {
-                    result.insert(part_chars[0..wordlen].iter().collect::<String>());
-                    number_of_errors += 1;
-                }
-            }
-        } else {
-            let mut diffs = Vec::with_capacity(10);
-            for (i, (&c1, &c2)) in sentence_chars.iter().zip(generated_sentence_chars.iter()).enumerate() {
-                if c1 != c2 {
-                    diffs.push(i);
-                }
-            }
-            if diffs.is_empty() { return (result, number_of_errors); }
-            let mut ranges = Vec::with_capacity(5);
-            let (mut start, mut end) = (diffs[0], diffs[0]);
-            for &index in diffs.iter().skip(1) {
-                if index == end + 1 { end = index }
-                else { 
-                    if end != sentence_chars.len() - 1 {
-                        ranges.push((start, end + 1));
-                    } else {
-                        ranges.push((start, end));
-                    }
-                    start = index; end = index 
-                }
-            }
-            ranges.push((start, end));
-
-            ranges.iter().map(|&(s,e)| {
-                sentence_chars[s..=e].iter()
-                    .collect::<String>()
-            }).for_each(|s| {
-                let part_chars = s.chars().collect::<Vec<char>>();
-                let mut wordlen: usize = 0;
-                while wordlen < part_chars.len() {
-                    wordlen += 1;
-                    if !table.contains_key(&part_chars[0..wordlen].iter().collect::<String>()) {
-                        break;
-                    }
-                }
-                if wordlen > 1 {
-                    result.insert(part_chars[0..wordlen].iter().collect::<String>());
-                    number_of_errors += 1;
-                }
-            });
+        if sentence.len() < 2 {
+            return None;
         }
-        (result, number_of_errors)
-    }).collect::<Vec<(HashSet<String>, i32)>>().into_iter().for_each(|(thread_result, thread_number_of_errors)| {
-        result.extend(thread_result);
-        number_of_errors += thread_number_of_errors;
+        let mut j = 0;
+        let mut k = 0;
+        for word in generated_sentence {
+            for char in word {
+                if *char != sentence[k] {
+                    let mut word_len = 2;
+                    loop {
+                        if j + word_len > sentence.len() {
+                            return None;
+                        }
+                        let word = sentence[j..j + word_len].iter().map(|c| c.clone()).collect::<String>();
+                        if !table.contains_key(&word) {
+                            return Some(word);
+                        }
+                        word_len += 1;
+                    }
+                }
+                k += 1;
+            }
+            j += word.len();
+        }
+        None
+    }).collect::<Vec<Option<String>>>().into_iter().for_each(|word| {
+        if let Some(word) = word {
+            result.insert(word);
+        }
     });
-    println!("错误数: {}", number_of_errors);
-    result
-}
-
-fn split(text: &String, delimiters: HashSet<char>) -> Vec<String> {
-    if delimiters.len() == 0 {
-        return vec![text.clone()];
-    }
-    
-    let mut result = Vec::with_capacity(10);
-    let mut s = String::new();
-    for c in text.chars() {
-        s.push(c);
-        if delimiters.contains(&c) {
-            if !s.is_empty() {
-                result.push(s.clone());
-                s.clear();
-            }
-        }
-    }
-    if !s.is_empty() {
-        result.push(s);
-    }
+    println!("错误数: {}", result.len());
     result
 }
