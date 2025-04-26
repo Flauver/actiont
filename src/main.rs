@@ -129,7 +129,6 @@ fn compare(sentences: &Vec<String>, generated_sentences: Vec<Vec<Vec<char>>>, ta
     (0..sentences.len()).into_par_iter().map(|i| {
         let sentence = sentences[i].chars().collect::<Vec<_>>();
         let generated_sentence = &generated_sentences[i];
-        println!("{:?}", generated_sentence);
         if sentence.len() < 2 {
             return None;
         }
@@ -137,7 +136,6 @@ fn compare(sentences: &Vec<String>, generated_sentences: Vec<Vec<Vec<char>>>, ta
         let mut k = 0;
         for word in generated_sentence {
             for char in word {
-                println!("{} {}", char, sentence[k]);
                 if *char != sentence[k] {
                     let mut word_len = 2;
                     loop {
