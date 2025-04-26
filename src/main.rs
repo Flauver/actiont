@@ -78,6 +78,9 @@ fn add_words(table: &mut HashMap<String, String>, reverse: &mut HashMap<String, 
             } else {
                 let word = chars[i - 1..i + 1].iter().collect::<String>();
                 let code = table[&chars[i - 1].to_string()].clone()+ &table[&char.to_string()].clone();
+                if reverse.contains_key(&code) {
+                    table.remove(&reverse[&code]);
+                }
                 table.insert(word.clone(), code.clone());
                 reverse.insert(code.clone(), word.clone());
                 entries.insert(code, word);
