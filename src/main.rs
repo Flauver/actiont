@@ -19,7 +19,7 @@ fn main() {
     loop {
         let generated_sentence = analog_whole_sentence_engine(&sentences, &table, &reverse, &settings);
         let new_entries = compare(&sentences, generated_sentence, &table);
-        if new_entries.clone().into_iter().map(|(x, _)| x).collect::<HashSet<_>>().difference(&table.keys().cloned().collect::<HashSet<String>>()).collect::<HashSet<&String>>().is_empty() {
+        if new_entries.iter().map(|(x, _)| x).collect::<HashSet<_>>().difference(&table.keys().collect::<HashSet<&String>>()).collect::<HashSet<&&String>>().is_empty() {
             break;
         }
         for (entry, isend) in new_entries {
